@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0F0E17">
+<meta name="description" content="Jogo de trilha controlado pela voz: cante a nota certa para guiar a bolinha de basquete por cada parede.">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<title>Nota na Cesta</title>
+<style>
+  :root{
+    --bg-deep:#0F0E17;
+    --court:#1B1730;
+    --court-2:#241E3D;
+    --line:#332B54;
+    --orange:#FF7A45;
+    --orange-dark:#C9531F;
+    --gold:#FFC857;
+    --teal:#4ECDC4;
+    --red:#FF5266;
+    --text:#F5F3FF;
+    --muted:#8B87A8;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg-deep);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    overflow:hidden;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:none;
+  }
+  #app{
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    max-width:520px;
+    margin:0 auto;
+    position:relative;
+  }
+  /* HUD */
+  #hud{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 16px 8px;
+    flex-shrink:0;
+  }
+  #pips{
+    display:flex;
+    gap:6px;
+  }
+  .pip{
+    width:16px;height:16px;border-radius:50%;
+    border:2px solid var(--line);
+    background:transparent;
+    transition:background .25s, border-color .25s, transform .25s;
+  }
+  .pip.done{ background:var(--gold); border-color:var(--gold); }
+  .pip.current{ border-color:var(--orange); transform:scale(1.15); }
+  #lives{
+    display:flex;
+    gap:5px;
+    font-size:18px;
+  }
+  .life{ opacity:1; transition:opacity .3s, transform .3s; }
+  .life.lost{ opacity:.18; transform:scale(.7); }
+
+  /* Canvas stage */
+  #stage{
+    flex:1;
+    position:relative;
+    margin:6px 12px;
+    border-radius:18px;
+    overflow:hidden;
+    background:linear-gradient(180deg,var(--court) 0%,var(--court-2) 100%);
+    box-shadow:inset 0 0 0 1px var(--line);
+    min-height:0;
+  }
+  canvas{
+    display:block;
+    width:100%;
+    height:100%;
+  }
+
+  /* Overlays */
+  .overlay{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    text-align:center;
+    padding:28px;
+    background:rgba(15,14,23,.86);
+    backdrop-filter:blur(2px);
+    gap:14px;
+  }
+  .overlay.hidden{ display:none; }
+  .overlay h1{
+    font-size:30px;
+    font-weight:800;
+    letter-spacing:-0.02em;
+    margin:0;
+    line-height:1.1;
+  }
+  .overlay h1 span{ color:var(--orange); }
+  .overlay p{
+    font-size:15px;
+    color:var(--muted);
+    max-width:340px;
+    line-height:1.5;
+    margin:0;
+  }
+  .note-row{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    justify-content:center;
+    margin:2px 0 6px;
+  }
+  .note-chip{
+    font-size:13px;
+    font-weight:700;
+    padding:5px 10px;
+    border-radius:20px;
+    background:var(--court-2);
+    border:1px solid var(--line);
+    color:var(--teal);
+  }
+  button{
+    font-family:inherit;
+    border:none;
+    cursor:pointer;
+  }
+  .btn-main{
+    background:var(--orange);
+    color:#1a0e05;
+    font-size:17px;
+    font-weight:800;
+    padding:15px 34px;
+    border-radius:30px;
+    box-shadow:0 6px 0 var(--orange-dark);
+    transition:transform .08s;
+  }
+  .btn-main:active{ transform:translateY(4px); box-shadow:0 2px 0 var(--orange-dark); }
+  .btn-ghost{
+    background:transparent;
+    color:var(--muted);
+    font-size:13px;
+    text-decoration:underline;
+    padding:6px;
+  }
+  #mic-status{
+    font-size:13px;
+    color:var(--red);
+    min-height:18px;
+  }
+
+  /* Bottom feedback bar */
+  #footer{
+    flex-shrink:0;
+    padding:10px 16px 16px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+  }
+  #mic-dot{
+    width:10px;height:10px;border-radius:50%;
+    background:var(--line);
+    flex-shrink:0;
+    transition:background .15s, box-shadow .15s;
+  }
+  #mic-dot.active{
+    background:var(--teal);
+    box-shadow:0 0 8px var(--teal);
+  }
+  #pitch-readout{
+    font-size:13px;
+    color:var(--muted);
+    flex:1;
+  }
+  #pitch-readout b{ color:var(--text); font-weight:700; }
+  #target-readout{
+    font-size:13px;
+    font-weight:700;
+    color:var(--gold);
+    text-align:right;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="hud">
+    <div id="pips"></div>
+    <div id="lives"></div>
+  </div>
+
+  <div id="stage">
+    <canvas id="game"></canvas>
+
+    <div id="start-overlay" class="overlay">
+      <h1>Nota na <span>Cesta</span></h1>
+      <p>A bolinha avança sozinha pela trilha. Cante para controlar a altura dela: quanto mais aguda a nota, mais alto ela sobe. Passe pelo furo de cada parede cantando a nota certa.</p>
+      <div class="note-row" id="note-preview"></div>
+      <button class="btn-main" id="start-btn">Ativar microfone e jogar</button>
+      <div id="mic-status"></div>
+    </div>
+
+    <div id="end-overlay" class="overlay hidden">
+      <h1 id="end-title">Fim de jogo</h1>
+      <p id="end-text"></p>
+      <button class="btn-main" id="retry-btn">Jogar de novo</button>
+    </div>
+
+  </div>
+
+  <div id="footer">
+    <div id="mic-dot"></div>
+    <div id="pitch-readout">Sua voz: <b id="pitch-note">—</b></div>
+    <div id="target-readout" id="target-note"></div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Musical setup ----------
+  const WALLS = [
+    { name:"C3", freq:130.81, gap:160 },
+    { name:"E3", freq:164.81, gap:145 },
+    { name:"G3", freq:196.00, gap:130 },
+    { name:"C4", freq:261.63, gap:115 },
+    { name:"E4", freq:329.63, gap:100 },
+    { name:"G4", freq:392.00, gap:90 },
+    { name:"C5", freq:523.25, gap:78 },
+  ];
+  const MIN_FREQ = 95;
+  const MAX_FREQ = 620;
+
+  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  function freqToNoteName(freq){
+    if(!freq || freq<=0) return "—";
+    const n = Math.round(12*Math.log2(freq/440)+69);
+    const name = NOTE_NAMES[((n%12)+12)%12];
+    const octave = Math.floor(n/12)-1;
+    return name+octave;
+  }
+
+  function freqToT(freq){
+    const c = Math.max(MIN_FREQ, Math.min(MAX_FREQ, freq));
+    return (Math.log2(c/MIN_FREQ))/(Math.log2(MAX_FREQ/MIN_FREQ));
+  }
+
+  // ---------- DOM ----------
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const pipsEl = document.getElementById('pips');
+  const livesEl = document.getElementById('lives');
+  const startOverlay = document.getElementById('start-overlay');
+  const endOverlay = document.getElementById('end-overlay');
+  const endTitle = document.getElementById('end-title');
+  const endText = document.getElementById('end-text');
+  const startBtn = document.getElementById('start-btn');
+  const retryBtn = document.getElementById('retry-btn');
+  const micStatus = document.getElementById('mic-status');
+  const micDot = document.getElementById('mic-dot');
+  const pitchNoteEl = document.getElementById('pitch-note');
+  const targetNoteEl = document.getElementById('target-note');
+  const notePreview = document.getElementById('note-preview');
+
+  WALLS.forEach(w=>{
+    const chip = document.createElement('div');
+    chip.className = 'note-chip';
+    chip.textContent = w.name;
+    notePreview.appendChild(chip);
+  });
+
+  function buildPips(){
+    pipsEl.innerHTML = '';
+    WALLS.forEach((_,i)=>{
+      const p = document.createElement('div');
+      p.className = 'pip';
+      p.dataset.i = i;
+      pipsEl.appendChild(p);
+    });
+  }
+  function buildLives(n){
+    livesEl.innerHTML = '';
+    for(let i=0;i<n;i++){
+      const l = document.createElement('div');
+      l.className = 'life';
+      l.textContent = '🏀';
+      livesEl.appendChild(l);
+    }
+  }
+  buildPips();
+  buildLives(3);
+
+  function updatePips(passedIdx, currentIdx){
+    [...pipsEl.children].forEach((p,i)=>{
+      p.classList.toggle('done', i<passedIdx);
+      p.classList.toggle('current', i===currentIdx);
+    });
+  }
+  function updateLives(remaining, total){
+    [...livesEl.children].forEach((l,i)=>{
+      l.classList.toggle('lost', i>=remaining);
+    });
+  }
+
+  // ---------- Canvas sizing ----------
+  let W=0,H=0,DPR=1;
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio||1, 2);
+    W = stage.clientWidth;
+    H = stage.clientHeight;
+    canvas.width = W*DPR;
+    canvas.height = H*DPR;
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- Audio / pitch detection ----------
+  let audioCtx=null, analyser=null, micSource=null, dataBuf=null;
+  let detectedFreq = 0;
+  let micActive = false;
+
+  async function initAudio(){
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+    });
+    micSource = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    dataBuf = new Float32Array(analyser.fftSize);
+    micSource.connect(analyser);
+    micActive = true;
+    micDot.classList.add('active');
+  }
+
+  // Autocorrelation pitch detection (ACF2+)
+  function autoCorrelate(buf, sampleRate){
+    const SIZE = buf.length;
+    let rms = 0;
+    for(let i=0;i<SIZE;i++){ rms += buf[i]*buf[i]; }
+    rms = Math.sqrt(rms/SIZE);
+    if(rms < 0.012) return -1; // too quiet
+
+    let r1=0, r2=SIZE-1, thres=0.2;
+    for(let i=0;i<SIZE/2;i++){ if(Math.abs(buf[i])<thres){ r1=i; break; } }
+    for(let i=1;i<SIZE/2;i++){ if(Math.abs(buf[SIZE-i])<thres){ r2=SIZE-i; break; } }
+    const trimmed = buf.slice(r1,r2);
+    const newSize = trimmed.length;
+
+    const c = new Array(newSize).fill(0);
+    for(let i=0;i<newSize;i++){
+      for(let j=0;j<newSize-i;j++){
+        c[i] += trimmed[j]*trimmed[j+i];
+      }
+    }
+    let d=0; while(c[d]>c[d+1]) d++;
+    let maxval=-1, maxpos=-1;
+    for(let i=d;i<newSize;i++){
+      if(c[i]>maxval){ maxval=c[i]; maxpos=i; }
+    }
+    let T0 = maxpos;
+    if(T0<=0) return -1;
+    const x1=c[T0-1]||c[T0], x2=c[T0], x3=c[T0+1]||c[T0];
+    const a = (x1+x3-2*x2)/2;
+    const b = (x3-x1)/2;
+    if(a) T0 = T0 - b/(2*a);
+    return sampleRate/T0;
+  }
+
+  function updatePitch(){
+    if(!micActive) return;
+    analyser.getFloatTimeDomainData(dataBuf);
+    const f = autoCorrelate(dataBuf, audioCtx.sampleRate);
+    if(f>0 && f>60 && f<1200){
+      detectedFreq = f;
+      pitchNoteEl.textContent = freqToNoteName(f) + " · " + Math.round(f) + "Hz";
+    } else {
+      detectedFreq = 0;
+      pitchNoteEl.textContent = "—";
+    }
+  }
+
+  // ---------- Game state ----------
+  const STATE = { START:'start', PLAY:'play', OVER:'over', WIN:'win' };
+  let state = STATE.START;
+
+  const SCROLL_SPEED = 118; // px/sec
+  const WALL_SPACING = 640;
+  const WALL_THICK = 30;
+  const START_OFFSET = 420;
+  const BALL_X_FRAC = 0.24;
+  const BALL_R = 15;
+  const SMOOTH = 0.14;
+  const FALL_DRIFT = 70; // px/sec when silent
+
+  let scrollDist = 0;
+  let ballY = 0;
+  let ballYTarget = 0;
+  let wallResolved = [];
+  let currentWallIdx = 0;
+  let lives = 3;
+  let flashTimer = 0;
+  let flashColor = null;
+  let recoilLock = 0;
+  let lastTime = 0;
+
+  function resetGame(){
+    scrollDist = 0;
+    ballYTarget = H*0.5;
+    ballY = H*0.5;
+    wallResolved = WALLS.map(()=>false);
+    currentWallIdx = 0;
+    lives = 3;
+    flashTimer = 0;
+    recoilLock = 0;
+    buildLives(3);
+    updatePips(0,0);
+  }
+
+  function wallWorldX(i){ return START_OFFSET + WALL_SPACING*(i+1); }
+  function gapCenterY(note){
+    const t = freqToT(note.freq);
+    const margin = H*0.08;
+    return H - margin - t*(H - margin*2);
+  }
+
+  function startGame(){
+    resetGame();
+    state = STATE.PLAY;
+    startOverlay.classList.add('hidden');
+    endOverlay.classList.add('hidden');
+  }
+
+  function endGame(win){
+    state = win?STATE.WIN:STATE.OVER;
+    endTitle.textContent = win? "Cesta completa! 🏀" : "Fim de jogo";
+    endText.textContent = win
+      ? "Você guiou a bola pelas 7 paredes cantando cada nota certinha."
+      : "A bola bateu na parede " + (currentWallIdx+1) + " de 7. Ajuste o tom da voz e tente de novo.";
+    endOverlay.classList.remove('hidden');
+  }
+
+  startBtn.addEventListener('click', async ()=>{
+    try{
+      micStatus.textContent = '';
+      startBtn.textContent = 'Pedindo acesso ao microfone…';
+      if(!micActive) await initAudio();
+      startBtn.textContent = 'Ativar microfone e jogar';
+      startGame();
+    }catch(err){
+      micStatus.textContent = 'Não foi possível acessar o microfone. Verifique as permissões e tente de novo.';
+      startBtn.textContent = 'Ativar microfone e jogar';
+    }
+  });
+  retryBtn.addEventListener('click', startGame);
+
+  // ---------- Update ----------
+  function update(dt){
+    updatePitch();
+
+    if(state !== STATE.PLAY) return;
+
+    if(recoilLock>0){
+      recoilLock -= dt;
+    } else {
+      scrollDist += SCROLL_SPEED*dt;
+    }
+
+    if(detectedFreq>0){
+      const t = freqToT(detectedFreq);
+      const margin = H*0.08;
+      ballYTarget = H - margin - t*(H - margin*2);
+    } else {
+      ballYTarget = Math.min(H-BALL_R, ballYTarget + FALL_DRIFT*dt);
+    }
+    ballY += (ballYTarget-ballY)*Math.min(1, SMOOTH*dt*60);
+
+    if(flashTimer>0) flashTimer -= dt;
+
+    const ballScreenX = W*BALL_X_FRAC;
+
+    for(let i=0;i<WALLS.length;i++){
+      if(wallResolved[i]) continue;
+      const wx = wallWorldX(i) - scrollDist;
+      const left = wx - WALL_THICK/2;
+      const right = wx + WALL_THICK/2;
+      if(right < ballScreenX - BALL_R) continue; // already passed without detection (shouldn't happen)
+      if(left > ballScreenX + BALL_R) break; // not reached yet, and walls are ordered
+
+      if(left <= ballScreenX + BALL_R && right >= ballScreenX - BALL_R){
+        // overlapping horizontally -> check vertical gap
+        const note = WALLS[i];
+        const cy = gapCenterY(note);
+        const top = cy - note.gap/2;
+        const bottom = cy + note.gap/2;
+        const clearTop = ballY - BALL_R > top;
+        const clearBottom = ballY + BALL_R < bottom;
+        if(clearTop && clearBottom){
+          wallResolved[i] = true;
+          currentWallIdx = i+1;
+          flashTimer = 0.35; flashColor = 'gold';
+          updatePips(currentWallIdx, Math.min(currentWallIdx, WALLS.length-1));
+          if(i === WALLS.length-1){
+            endGame(true);
+          }
+        } else if(right < ballScreenX + BALL_R){
+          // fully past without clearing -> fail
+          wallResolved[i] = true; // resolved as failed
+          lives -= 1;
+          updateLives(lives,3);
+          flashTimer = 0.35; flashColor = 'red';
+          if(lives<=0){
+            currentWallIdx = i;
+            endGame(false);
+          } else {
+            // retry: rewind scroll so wall reappears ahead
+            wallResolved[i] = false;
+            scrollDist = wallWorldX(i) - (ballScreenX + 170);
+            recoilLock = 0.25;
+          }
+        }
+      }
+    }
+  }
+
+  // ---------- Draw ----------
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    // court floor lines (subtle horizontal guide lines for pitch reference)
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = '#3A3560';
+    ctx.lineWidth = 1;
+    for(let i=1;i<4;i++){
+      const y = H*i/4;
+      ctx.beginPath();
+      ctx.setLineDash([4,6]);
+      ctx.moveTo(0,y); ctx.lineTo(W,y);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    if(state===STATE.PLAY || state===STATE.OVER || state===STATE.WIN){
+      const ballScreenX = W*BALL_X_FRAC;
+
+      // walls
+      WALLS.forEach((note,i)=>{
+        const wx = wallWorldX(i) - scrollDist;
+        if(wx < -60 || wx > W+60) return;
+        const cy = gapCenterY(note);
+        const top = cy - note.gap/2;
+        const bottom = cy + note.gap/2;
+
+        const passed = wallResolved[i] && currentWallIdx>i;
+        ctx.fillStyle = passed ? 'rgba(255,200,87,0.35)' : '#332B54';
+        // upper segment
+        ctx.fillRect(wx-WALL_THICK/2, 0, WALL_THICK, Math.max(0,top));
+        // lower segment
+        ctx.fillRect(wx-WALL_THICK/2, bottom, WALL_THICK, Math.max(0,H-bottom));
+
+        // gap outline
+        ctx.strokeStyle = passed ? '#FFC857' : '#4ECDC4';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(wx-WALL_THICK/2, top, WALL_THICK, bottom-top);
+
+        // note label
+        ctx.save();
+        ctx.fillStyle = passed ? '#FFC857' : '#F5F3FF';
+        ctx.font = '700 15px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(note.name, wx, Math.max(16, top-10));
+        ctx.restore();
+      });
+
+      // ball
+      const flashActive = flashTimer>0;
+      ctx.save();
+      ctx.beginPath();
+      ctx.fillStyle = flashActive ? (flashColor==='gold' ? '#FFC857' : '#FF5266') : '#FF7A45';
+      ctx.arc(ballScreenX, ballY, BALL_R, 0, Math.PI*2);
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#C9531F';
+      ctx.stroke();
+      // basketball lines
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(ballScreenX-BALL_R, ballY); ctx.lineTo(ballScreenX+BALL_R, ballY);
+      ctx.moveTo(ballScreenX, ballY-BALL_R); ctx.lineTo(ballScreenX, ballY+BALL_R);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ---------- HUD text: upcoming target ----------
+  function updateTargetReadout(){
+    if(state===STATE.PLAY && currentWallIdx < WALLS.length){
+      targetNoteEl.textContent = "Alvo: " + WALLS[currentWallIdx].name;
+    } else {
+      targetNoteEl.textContent = "";
+    }
+  }
+
+  // ---------- Loop ----------
+  function loop(ts){
+    if(!lastTime) lastTime = ts;
+    let dt = (ts-lastTime)/1000;
+    dt = Math.min(dt, 0.05);
+    lastTime = ts;
+
+    update(dt);
+    draw();
+    updateTargetReadout();
+
+    requestAnimationFrame(loop);
+  }
+  ballYTarget = H*0.5; ballY = H*0.5;
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
